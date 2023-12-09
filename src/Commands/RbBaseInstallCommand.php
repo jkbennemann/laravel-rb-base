@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace Raidboxes\RbBase\Commands;
 
-use Illuminate\Cache\CacheManager;
 use Illuminate\Filesystem\Filesystem;
 use Raidboxes\LaravelJwtAuthentication\Providers\Jwt\Lcobucci;
 use Spatie\LaravelPackageTools\Commands\InstallCommand;
