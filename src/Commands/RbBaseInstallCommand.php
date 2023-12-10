@@ -29,6 +29,8 @@ class RbBaseInstallCommand extends InstallCommand
 
         $this->configureDomains();
 
+        $this->updateComposerJson();
+
         foreach ($this->publishes as $tag) {
             $name = str_replace('-', ' ', $tag);
             $this->comment("Publishing {$name}...");
@@ -213,5 +215,104 @@ class RbBaseInstallCommand extends InstallCommand
         $file2 = $filesystem->get($destination);
 
         return md5($file1) != md5($file2);
+    }
+
+    private function updateComposerJson(): void
+    {
+        $filesystem = new Filesystem();
+        $applicationComposer = json_decode($filesystem->get('composer.json'), true);
+        $reposToAdd = [];
+        //repositories
+        $urls = collect($applicationComposer['repositories'] ?? [])->filter(function(array $data) {
+            return $data['url'] ?? null;
+        })->map(function(array $data) {
+            return $data['url'];
+        })->toArray();
+        ray($applicationComposer);
+        //jwt dependency
+        if (!in_array('git@gitlab.com:raidboxes/packages/laravel-jwt-authentication.git', $urls)) {
+            $reposToAdd[] = [
+                'type' => 'vcs',
+                'url' => 'git@gitlab.com:raidboxes/packages/laravel-jwt-authentication.git',
+            ];
+        }
+
+        //schema dto dependency
+        if (!in_array('git@gitlab.com:raidboxes/packages/schema-dto.git', $urls)) {
+            $reposToAdd[] = [
+                'type' => 'vcs',
+                'url' => 'git@gitlab.com:raidboxes/packages/schema-dto.git',
+            ];
+        }
+
+        //laravel-phpcs
+        if (!in_array('git@gitlab.com:raidboxes/packages/laravel-phpcs.git', $urls)) {
+            $reposToAdd[] = [
+                'type' => 'vcs',
+                'url' => 'git@gitlab.com:raidboxes/packages/laravel-phpcs.git',
+            ];
+        }
+
+        $applicationComposer['repositories'] = array_merge(
+            $applicationComposer['repositories'],
+            $reposToAdd
+        );
+        $applicationComposer['license'] = 'proprietary';
+        $applicationComposer['version'] = $applicationComposer['version'] ?? '0.0.1';
+        $applicationComposer['type'] = $applicationComposer['type'] ?? 'project';
+
+        $dependenciesToAdd = [];
+        $urls = collect($applicationComposer['require'] ?? [])->map(function(string $value, string $package) {
+            return $package;
+        })->flatten()->toArray();
+
+        if (!in_array('raidboxes/schema-dto', $urls)) {
+            $devDependenciesToAdd['raidboxes/schema-dto'] = '^1.2.0';
+        }
+
+        if (!in_array('sentry/sentry-laravel', $urls)) {
+            $devDependenciesToAdd['sentry/sentry-laravel'] = '^3.2.0';
+        }
+
+        if (!in_array('raidboxes/laravel-jwt-authentication', $urls)) {
+            $devDependenciesToAdd['raidboxes/laravel-jwt-authentication'] = '^2.0';
+        }
+
+        if (!in_array('prwnr/laravel-streamer', $urls)) {
+            $devDependenciesToAdd['prwnr/laravel-streamer'] = '^3.4';
+        }
+
+        if (!in_array('onecentlin/laravel-adminer', $urls)) {
+            $devDependenciesToAdd['onecentlin/laravel-adminer'] = '^6.0';
+        }
+
+        $applicationComposer['require'] = array_merge(
+            $applicationComposer['require'],
+            $dependenciesToAdd
+        );
+
+        $devDependenciesToAdd = [];
+        $urls = collect($applicationComposer['require-dev'] ?? [])->map(function(string $value, string $package) {
+            return $package;
+        })->flatten()->toArray();
+
+        if (!in_array('spatie/laravel-ray', $urls)) {
+            $devDependenciesToAdd['spatie/laravel-ray'] = '^1.33';
+        }
+
+        if (!in_array('raidboxes/laravel-phpcs', $urls)) {
+            $devDependenciesToAdd['raidboxes/laravel-phpcs'] = 'dev-main';
+        }
+
+        if (!in_array('laravel/sail', $urls)) {
+            $devDependenciesToAdd['laravel/sail'] = '^1.22';
+        }
+
+        $applicationComposer['require-dev'] = array_merge(
+            $applicationComposer['require-dev'],
+            $devDependenciesToAdd
+        );
+
+        $filesystem->replace('composer.json', json_encode($applicationComposer, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
     }
 }
