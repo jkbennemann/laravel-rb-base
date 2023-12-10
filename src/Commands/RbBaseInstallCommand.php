@@ -25,6 +25,8 @@ class RbBaseInstallCommand extends InstallCommand
 
         $this->configureJwt();
 
+        $this->configureErrorHandler();
+
         $this->configureDomains();
 
         foreach ($this->publishes as $tag) {
@@ -50,22 +52,6 @@ class RbBaseInstallCommand extends InstallCommand
             $this->copyServiceProviderInApp();
         }
 
-        if ($this->starRepo) {
-            if ($this->confirm('Would you like to star our repo on GitHub?')) {
-                $repoUrl = "https://github.com/{$this->starRepo}";
-
-                if (PHP_OS_FAMILY == 'Darwin') {
-                    exec("open {$repoUrl}");
-                }
-                if (PHP_OS_FAMILY == 'Windows') {
-                    exec("start {$repoUrl}");
-                }
-                if (PHP_OS_FAMILY == 'Linux') {
-                    exec("xdg-open {$repoUrl}");
-                }
-            }
-        }
-
         $this->info("{$this->package->shortName()} has been installed!");
 
         if ($this->endWith) {
@@ -75,9 +61,23 @@ class RbBaseInstallCommand extends InstallCommand
         return 0;
     }
 
+    private function configureErrorHandler(): void
+    {
+        $fileHasChanged = $this->hasFileChanged(__DIR__ . '/../Handler.php.stub', 'app/Exceptions/Handler.php');
+
+        if ($fileHasChanged) {
+            if ($this->confirm('Do you want to replace the Handler.php file?', false)) {
+                copy(__DIR__ . '/../Handler.php.stub', base_path('app/Exceptions/Handler.php'));
+
+                return;
+            }
+
+            $this->info('Skipped replacing Handler.php');
+        }
+    }
+
     private function configureDomains(): void
     {
-        $this->info('Configuring Domain setup');
         $filesystem = new Filesystem();
 
         //set jwt-authentication.algorithm to ALGORITHM_RS256
@@ -88,6 +88,41 @@ class RbBaseInstallCommand extends InstallCommand
         $filesystem->ensureDirectoryExists('domain/Raidboxes/Enums');
         $filesystem->ensureDirectoryExists('domain/Raidboxes/Traits');
         $filesystem->ensureDirectoryExists('domain/Raidboxes/Requests');
+
+        $this->ensureGitKeep();
+    }
+
+    private function ensureGitKeep(): void
+    {
+        $filesystem = new Filesystem();
+
+        if ($filesystem->isEmptyDirectory('domain/Common/Entity')) {
+            $filesystem->put('domain/Common/Entity/.gitkeep', '');
+        }
+
+        if ($filesystem->isEmptyDirectory('domain/Raidboxes/DTO')) {
+            $filesystem->put('domain/Raidboxes/DTO/.gitkeep', '');
+        }
+
+        if ($filesystem->isEmptyDirectory('domain/Raidboxes/Events')) {
+            $filesystem->put('domain/Raidboxes/Events/.gitkeep', '');
+        }
+
+        if ($filesystem->isEmptyDirectory('domain/Raidboxes/Integration')) {
+            $filesystem->put('domain/Raidboxes/Integration/.gitkeep', '');
+        }
+
+        if ($filesystem->isEmptyDirectory('domain/Raidboxes/Enums')) {
+            $filesystem->put('domain/Raidboxes/Enums/.gitkeep', '');
+        }
+
+        if ($filesystem->isEmptyDirectory('domain/Raidboxes/Traits')) {
+            $filesystem->put('domain/Raidboxes/Traits/.gitkeep', '');
+        }
+
+        if ($filesystem->isEmptyDirectory('domain/Raidboxes/Requests')) {
+            $filesystem->put('domain/Raidboxes/Requests/.gitkeep', '');
+        }
     }
 
     private function configureJwt(): void
@@ -98,15 +133,22 @@ class RbBaseInstallCommand extends InstallCommand
 
         $privateKeyExists = $filesystem->exists('storage/certs/rs256.key');
 
-        if (!$privateKeyExists) {
-            $this->executeShell('ssh-keygen -t rsa -b 4096 -m PEM -f ' . base_path('storage/certs/rs256.key') . ' -q -N ""');
-            $this->executeShell('openssl rsa -in ' . base_path('storage/certs/rs256.key') . ' -pubout -outform PEM -out ' . base_path('storage/certs/rs256.key.pub'));
+        if ($privateKeyExists) {
+            if (!$this->confirm('Do you want to regenerate your RSA Key for JWT Authentication?', false)) {
+                return;
+            }
 
-            //update .env settings
-            $this->changeEnvironmentVariable('JWT_ALGORITHM', Lcobucci::ALGORITHM_RS256);
-            $this->changeEnvironmentVariable('JWT_PRIVATE_KEY', "\"" . './storage/certs/rs256.key' . "\"");
-            $this->changeEnvironmentVariable('JWT_PUBLIC_KEY', "\"" . './storage/certs/rs256.key.pub' . "\"");
+            $filesystem->delete(base_path('storage/certs/rs256.key'));
+            $filesystem->delete(base_path('storage/certs/rs256.key.pub'));
         }
+
+        $this->executeShell('ssh-keygen -t rsa -b 4096 -m PEM -f ' . base_path('storage/certs/rs256.key') . ' -q -N ""');
+        $this->executeShell('openssl rsa -in ' . base_path('storage/certs/rs256.key') . ' -pubout -outform PEM -out ' . base_path('storage/certs/rs256.key.pub'));
+
+        //update .env settings
+        $this->changeEnvironmentVariable('JWT_ALGORITHM', Lcobucci::ALGORITHM_RS256);
+        $this->changeEnvironmentVariable('JWT_PRIVATE_KEY', "\"" . './storage/certs/rs256.key' . "\"");
+        $this->changeEnvironmentVariable('JWT_PUBLIC_KEY', "\"" . './storage/certs/rs256.key.pub' . "\"");
     }
 
     private function executeShell($cmd): string
@@ -162,5 +204,14 @@ class RbBaseInstallCommand extends InstallCommand
                 "$key=".$old, "$key=".$value, file_get_contents($path)
             ));
         }
+    }
+
+    private function hasFileChanged(string $source, string $destination): bool
+    {
+        $filesystem = new Filesystem();
+        $file1 = $filesystem->get($source);
+        $file2 = $filesystem->get($destination);
+
+        return md5($file1) != md5($file2);
     }
 }

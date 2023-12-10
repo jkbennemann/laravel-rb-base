@@ -1,0 +1,91 @@
+<?php
+
+declare(strict_types=1);
+
+namespace App\Exceptions;
+
+use Carbon\Carbon;
+use DateTimeInterface;
+use Illuminate\Foundation\Exceptions\Handler as ExceptionHandler;
+use Illuminate\Validation\ValidationException;
+use Symfony\Component\HttpFoundation\Response;
+use Throwable;
+
+class Handler extends ExceptionHandler
+{
+    private array $exceptionStatusCode = [
+        \Exception::class => Response::HTTP_BAD_REQUEST,
+        ValidationException::class => Response::HTTP_UNPROCESSABLE_ENTITY,
+    ];
+
+    private function matchStatusCode(Throwable $e): int
+    {
+        $code = method_exists($e, 'getStatusCode')
+            ? $e->getStatusCode()
+            : $e->getCode();
+
+        return array_key_exists($code, Response::$statusTexts)
+            ? $code
+            : $this->exceptionStatusCode[$e::class] ?? Response::HTTP_BAD_REQUEST;
+    }
+
+    public function register(): void
+    {
+        $this->reportable(function (Throwable $e) {
+            if (app()->bound('sentry')) {
+                app('sentry')->captureException($e);
+            }
+        });
+    }
+
+    public function render($request, Throwable $e) : Response
+    {
+        if (property_exists($e, 'validator')) {
+            $error['errors'] = $this->addMessageContext($e->validator->getMessageBag()->toArray());
+        } else {
+            $error['errors'] = $this->addMessageContext(['exception' => [$e->getMessage()]]);
+        }
+
+        $trace = app()->hasDebugModeEnabled() ? ['detail' => $e->getTrace()] : [];
+
+        return response()->json(array_merge([
+            'timestamp' => (new Carbon())->now()->format(DateTimeInterface::ATOM),
+            'message' => $e->getMessage(),
+            'status' => $e->getCode(),
+            'path' => $request->getPathInfo(),
+        ], $error, $trace))->setStatusCode($this->matchStatusCode($e));
+    }
+
+    private function addMessageContext(array $message): array
+    {
+        $errors = [];
+        foreach ($message as $errorKey => $items) {
+            $errors[$errorKey] = $this->parseErrorItems($items);
+        }
+
+        return $errors;
+    }
+
+    private function parseErrorItems(array $items): array
+    {
+        $parsedItems = [];
+        foreach ($items as $item) {
+            $parsedItem = $this->parseErrorMessage($item);
+            $parsedItems[] = $parsedItem;
+        }
+
+        return $parsedItems;
+    }
+
+    private function parseErrorMessage(string $message): array
+    {
+        if (preg_match("/^(.*?)\|default:(.*?)$/", $message, $matches)) {
+            return [
+                'i18n' => $matches[1],
+                'message' => $matches[2],
+            ];
+        }
+
+        return ['message' => $message];
+    }
+}
