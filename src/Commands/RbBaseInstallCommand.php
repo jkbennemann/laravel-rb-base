@@ -226,7 +226,7 @@ class RbBaseInstallCommand extends InstallCommand
         })->map(function(array $data) {
             return $data['url'];
         })->toArray();
-        ray($applicationComposer);
+
         //jwt dependency
         if (!in_array('git@gitlab.com:raidboxes/packages/laravel-jwt-authentication.git', $urls)) {
             $reposToAdd[] = [
