@@ -39,11 +39,10 @@ class RbBaseServiceProvider extends PackageServiceProvider
 
         $callable = function(RbBaseInstallCommand $command) {
             $command
-                ->startWith(function (RbBaseInstallCommand $command) {
-                    $command->info('Hello, and welcome to my great new package!');
-                })
+                ->publishConfigFile()
+                ->publishMigrations()
                 ->endWith(function (RbBaseInstallCommand $command) {
-                    $command->info('Have a great day!');
+                    $command->info('Project is set up!');
                 });
         };
 

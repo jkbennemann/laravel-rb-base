@@ -54,8 +54,6 @@ class RbBaseInstallCommand extends InstallCommand
             $this->copyServiceProviderInApp();
         }
 
-        $this->info("{$this->package->shortName()} has been installed!");
-
         if ($this->endWith) {
             ($this->endWith)($this);
         }
