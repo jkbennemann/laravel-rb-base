@@ -6,6 +6,7 @@ namespace Raidboxes\RbBase\Commands;
 
 use Illuminate\Filesystem\Filesystem;
 use Raidboxes\LaravelJwtAuthentication\Providers\Jwt\Lcobucci;
+use Raidboxes\RbBase\ComposerConfiguration;
 use Spatie\LaravelPackageTools\Commands\InstallCommand;
 use Spatie\LaravelPackageTools\Package;
 use Symfony\Component\Process\Process;
@@ -95,60 +96,50 @@ class RbBaseInstallCommand extends InstallCommand
     private function ensureGitKeep(): void
     {
         $filesystem = new Filesystem();
+        $directories = [
+            'domain/Common/Entity',
+            'domain/Raidboxes/DTO',
+            'domain/Raidboxes/Events',
+            'domain/Raidboxes/Integration',
+            'domain/Raidboxes/Enums',
+            'domain/Raidboxes/Traits',
+            'domain/Raidboxes/Requests',
+        ];
 
-        if ($filesystem->isEmptyDirectory('domain/Common/Entity')) {
-            $filesystem->put('domain/Common/Entity/.gitkeep', '');
-        }
-
-        if ($filesystem->isEmptyDirectory('domain/Raidboxes/DTO')) {
-            $filesystem->put('domain/Raidboxes/DTO/.gitkeep', '');
-        }
-
-        if ($filesystem->isEmptyDirectory('domain/Raidboxes/Events')) {
-            $filesystem->put('domain/Raidboxes/Events/.gitkeep', '');
-        }
-
-        if ($filesystem->isEmptyDirectory('domain/Raidboxes/Integration')) {
-            $filesystem->put('domain/Raidboxes/Integration/.gitkeep', '');
-        }
-
-        if ($filesystem->isEmptyDirectory('domain/Raidboxes/Enums')) {
-            $filesystem->put('domain/Raidboxes/Enums/.gitkeep', '');
-        }
-
-        if ($filesystem->isEmptyDirectory('domain/Raidboxes/Traits')) {
-            $filesystem->put('domain/Raidboxes/Traits/.gitkeep', '');
-        }
-
-        if ($filesystem->isEmptyDirectory('domain/Raidboxes/Requests')) {
-            $filesystem->put('domain/Raidboxes/Requests/.gitkeep', '');
+        foreach ($directories as $directory) {
+            if ($filesystem->isEmptyDirectory($directory)) {
+                $filesystem->put($directory . '/.gitkeep', '');
+            }
         }
     }
 
     private function configureJwt(): void
     {
         $filesystem = new Filesystem();
+        $certificatePath = 'storage/certs';
+        $privateKeyName = 'rs256.key';
+        $publicKeyName = 'rs256.key.pub';
 
-        $filesystem->ensureDirectoryExists('storage/certs');
+        $filesystem->ensureDirectoryExists($certificatePath);
 
-        $privateKeyExists = $filesystem->exists('storage/certs/rs256.key');
+        $privateKeyExists = $filesystem->exists($certificatePath . '/' . $privateKeyName);
 
         if ($privateKeyExists) {
             if (!$this->confirm('Do you want to regenerate your RSA Key for JWT Authentication?', false)) {
                 return;
             }
 
-            $filesystem->delete(base_path('storage/certs/rs256.key'));
-            $filesystem->delete(base_path('storage/certs/rs256.key.pub'));
+            $filesystem->delete(base_path($certificatePath . '/' . $privateKeyName));
+            $filesystem->delete(base_path($certificatePath . '/' . $publicKeyName));
         }
 
-        $this->executeShell('ssh-keygen -t rsa -b 4096 -m PEM -f ' . base_path('storage/certs/rs256.key') . ' -q -N ""');
-        $this->executeShell('openssl rsa -in ' . base_path('storage/certs/rs256.key') . ' -pubout -outform PEM -out ' . base_path('storage/certs/rs256.key.pub'));
+        $this->executeShell('ssh-keygen -t rsa -b 4096 -m PEM -f ' . base_path($certificatePath . '/' . $privateKeyName) . ' -q -N ""');
+        $this->executeShell('openssl rsa -in ' . base_path($certificatePath . '/' . $privateKeyName) . ' -pubout -outform PEM -out ' . base_path($certificatePath . '/' . $publicKeyName));
 
         //update .env settings
         $this->changeEnvironmentVariable('JWT_ALGORITHM', Lcobucci::ALGORITHM_RS256);
-        $this->changeEnvironmentVariable('JWT_PRIVATE_KEY', "\"" . './storage/certs/rs256.key' . "\"");
-        $this->changeEnvironmentVariable('JWT_PUBLIC_KEY', "\"" . './storage/certs/rs256.key.pub' . "\"");
+        $this->changeEnvironmentVariable('JWT_PRIVATE_KEY', "\"" . './' . $certificatePath . '/' . $privateKeyName . "\"");
+        $this->changeEnvironmentVariable('JWT_PUBLIC_KEY', "\"" . './' . $certificatePath . '/' . $publicKeyName . "\"");
     }
 
     private function executeShell($cmd): string
@@ -219,97 +210,77 @@ class RbBaseInstallCommand extends InstallCommand
     {
         $filesystem = new Filesystem();
         $applicationComposer = json_decode($filesystem->get('composer.json'), true);
-        $reposToAdd = [];
+        $config = new ComposerConfiguration();
+        $neededDependencies = $config->dependencies();
+        $neededDevDependencies = $config->devDependencies();
+        $neededRepositories = $config->repositories();
+        $neededAutoloadPsr4 = $config->autoloadPsr4();
+        $neededAutoloadPsr4Dev = $config->autoloadPsr4Dev();
+
         //repositories
-        $urls = collect($applicationComposer['repositories'] ?? [])->filter(function(array $data) {
+        $repositories = collect($applicationComposer['repositories'] ?? []);
+        $setRepositories = $repositories->filter(function(array $data) {
             return $data['url'] ?? null;
         })->map(function(array $data) {
             return $data['url'];
         })->toArray();
 
-        //jwt dependency
-        if (!in_array('git@gitlab.com:raidboxes/packages/laravel-jwt-authentication.git', $urls)) {
-            $reposToAdd[] = [
-                'type' => 'vcs',
-                'url' => 'git@gitlab.com:raidboxes/packages/laravel-jwt-authentication.git',
-            ];
+        foreach ($neededRepositories as $repositoryData) {
+            if (!in_array($repositoryData['url'], $setRepositories)) {
+                $repositories->add([
+                    'type' => $repositoryData['type'],
+                    'url' => $repositoryData['url'],
+                ]);
+            }
         }
 
-        //schema dto dependency
-        if (!in_array('git@gitlab.com:raidboxes/packages/schema-dto.git', $urls)) {
-            $reposToAdd[] = [
-                'type' => 'vcs',
-                'url' => 'git@gitlab.com:raidboxes/packages/schema-dto.git',
-            ];
-        }
-
-        //laravel-phpcs
-        if (!in_array('git@gitlab.com:raidboxes/packages/laravel-phpcs.git', $urls)) {
-            $reposToAdd[] = [
-                'type' => 'vcs',
-                'url' => 'git@gitlab.com:raidboxes/packages/laravel-phpcs.git',
-            ];
-        }
-
-        $applicationComposer['repositories'] = array_merge(
-            $applicationComposer['repositories'],
-            $reposToAdd
-        );
-        $applicationComposer['license'] = 'proprietary';
-        $applicationComposer['version'] = $applicationComposer['version'] ?? '0.0.1';
-        $applicationComposer['type'] = $applicationComposer['type'] ?? 'project';
-
-        $dependenciesToAdd = [];
-        $urls = collect($applicationComposer['require'] ?? [])->map(function(string $value, string $package) {
+        //dependencies
+        $dependencies = collect($applicationComposer['require'] ?? []);
+        $setDependencies = $dependencies->map(function(string $value, string $package) {
             return $package;
         })->flatten()->toArray();
 
-        if (!in_array('raidboxes/schema-dto', $urls)) {
-            $devDependenciesToAdd['raidboxes/schema-dto'] = '^1.2.0';
+        foreach ($neededDependencies as $package => $version) {
+            if (!in_array($package, $setDependencies)) {
+                $dependencies->put($package, $version);
+            }
         }
 
-        if (!in_array('sentry/sentry-laravel', $urls)) {
-            $devDependenciesToAdd['sentry/sentry-laravel'] = '^3.2.0';
-        }
-
-        if (!in_array('raidboxes/laravel-jwt-authentication', $urls)) {
-            $devDependenciesToAdd['raidboxes/laravel-jwt-authentication'] = '^2.0';
-        }
-
-        if (!in_array('prwnr/laravel-streamer', $urls)) {
-            $devDependenciesToAdd['prwnr/laravel-streamer'] = '^3.4';
-        }
-
-        if (!in_array('onecentlin/laravel-adminer', $urls)) {
-            $devDependenciesToAdd['onecentlin/laravel-adminer'] = '^6.0';
-        }
-
-        $applicationComposer['require'] = array_merge(
-            $applicationComposer['require'],
-            $dependenciesToAdd
-        );
-
-        $devDependenciesToAdd = [];
-        $urls = collect($applicationComposer['require-dev'] ?? [])->map(function(string $value, string $package) {
+        //dev dependencies
+        $devDependencies = collect($applicationComposer['require-dev'] ?? []);
+        $setDependencies = $devDependencies->map(function(string $value, string $package) {
             return $package;
         })->flatten()->toArray();
 
-        if (!in_array('spatie/laravel-ray', $urls)) {
-            $devDependenciesToAdd['spatie/laravel-ray'] = '^1.33';
+        foreach ($neededDevDependencies as $package => $version) {
+            if (!in_array($package, $setDependencies)) {
+                $devDependencies->put($package, $version);
+            }
         }
 
-        if (!in_array('raidboxes/laravel-phpcs', $urls)) {
-            $devDependenciesToAdd['raidboxes/laravel-phpcs'] = 'dev-main';
+        //autoload
+        $autoloadPsr4 = collect($applicationComposer['autoload']['psr-4'] ?? []);
+        foreach ($neededAutoloadPsr4 as $namespace => $directory) {
+            if (!array_key_exists($namespace, $autoloadPsr4->toArray())) {
+                $autoloadPsr4->put($namespace, $directory);
+            }
         }
 
-        if (!in_array('laravel/sail', $urls)) {
-            $devDependenciesToAdd['laravel/sail'] = '^1.22';
+        $autoloadPsr4Dev = collect($applicationComposer['autoload-dev']['psr-4'] ?? []);
+        foreach ($neededAutoloadPsr4Dev as $namespace => $directory) {
+            if (!array_key_exists($namespace, $autoloadPsr4Dev->toArray())) {
+                $autoloadPsr4Dev->put($namespace, $directory);
+            }
         }
 
-        $applicationComposer['require-dev'] = array_merge(
-            $applicationComposer['require-dev'],
-            $devDependenciesToAdd
-        );
+        $applicationComposer['repositories'] = $repositories->toArray();
+        $applicationComposer['license'] = $config->license();
+        $applicationComposer['version'] = $applicationComposer['version'] ?? $config->version();
+        $applicationComposer['type'] = $applicationComposer['type'] ?? $config->type();
+        $applicationComposer['require'] = $dependencies->toArray();
+        $applicationComposer['require-dev'] = $devDependencies->toArray();
+        $applicationComposer['autoload']['psr-4'] = $autoloadPsr4->toArray();
+        $applicationComposer['autoload-dev']['psr-4'] = $autoloadPsr4Dev->toArray();
 
         $filesystem->replace('composer.json', json_encode($applicationComposer, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
     }
